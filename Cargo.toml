@@ -25,7 +25,7 @@ futures = "0.3.30"
 futures-core = {version = "0.3.29", default-features = false, features = ["alloc"]}
 futures-util = {version = "0.3.29", default-features = false, features = ["alloc"]}
 #num = "0.3"
-tokio = {version = "1.39.2", features = ["full"]}
+tokio = {version = "1.40.0", features = ["full"]}
 nanoid = "0.4.0"
 pem = "3.0.4"
 ring = "0.17.8"
