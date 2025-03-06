@@ -28,7 +28,7 @@ futures-util = {version = "0.3.31", default-features = false, features = ["alloc
 tokio = {version = "1.43.0", features = ["full"]}
 nanoid = "0.4.0"
 pem = "3.0.5"
-ring = "0.17.11"
+ring = "0.17.12"
 webpki = "0.22.4"
 mio = "1.0.3"
 openssl = "0.10.71"
