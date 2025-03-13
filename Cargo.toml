@@ -5,7 +5,7 @@ name = "fakeidp"
 version = "1.0.3"
 
 [dependencies]
-actix-cors = "0.7.0"
+actix-cors = "0.7.1"
 actix-multipart = "0.7.2"
 actix-rt = "2.10.0"
 actix-service = "2.0.3"
