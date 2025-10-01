@@ -102,6 +102,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/health").route(web::get().to(checks::check)))
             .service(fs::Files::new("/static", args.folder.as_str()).show_files_listing())
     })
+    .shutdown_timeout(5)
     .bind(bind)?
     .run()
     .await
