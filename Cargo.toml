@@ -2,41 +2,41 @@
 authors = ["Olger Warnier <olger@spectare.nl>"]
 edition = "2021"
 name = "fakeidp"
-version = "1.0.3"
+version = "1.0.4"
 
 [dependencies]
 actix-cors = "0.7.1"
 actix-multipart = "0.7.2"
-actix-rt = "2.10.0"
+actix-rt = "2.11.0"
 actix-service = "2.0.3"
-actix-web = "4.10.2"
+actix-web = "4.11.0"
 actix-4-jwt-auth = "1.2.6"
 #actix-4-jwt-auth = { path = "../actix-4-jwt-auth" }
-actix-files = "0.6.6"
+actix-files = "0.6.8"
 biscuit = "0.7.0"
 #biscuit = { path = "../biscuit/" }
 bytes = "1.10.1"
 chrono = "0.4"
 num = "0.4"
-clap = {version = "4.5.41", features = ["derive", "unicode", "env"]}
+clap = {version = "4.5.48", features = ["derive", "unicode", "env"]}
 der-parser = "10.0.0"
 env_logger = "0.11.8"
 futures = "0.3.31"
 futures-core = {version = "0.3.31", default-features = false, features = ["alloc"]}
 futures-util = {version = "0.3.31", default-features = false, features = ["alloc"]}
 #num = "0.3"
-tokio = {version = "1.47.0", features = ["full"]}
+tokio = {version = "1.47.1", features = ["full"]}
 nanoid = "0.4.0"
 pem = "3.0.5"
 ring = "0.17.14"
 webpki = "0.22.4"
-mio = "1.0.3"
+mio = "1.0.4"
 openssl = "0.10.72"
 data-encoding = "2.9.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
-sysinfo = "0.36.0"
+sysinfo = "0.37.1"
 reqwest = {version = "0.12", features = ["json", "blocking"]}
 
 # [profile.release]
