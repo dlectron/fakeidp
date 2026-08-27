@@ -2,45 +2,49 @@
 authors = ["Olger Warnier <olger@spectare.nl>"]
 edition = "2021"
 name = "fakeidp"
-version = "1.0.4"
+version = "1.1.0"
 
 [dependencies]
-actix-cors = "0.7.1"
-actix-multipart = "0.7.2"
-actix-rt = "2.11.0"
+actix-cors = "0.7.2"
+actix-multipart = "0.8.1"
+actix-rt = "2.12.0"
 actix-service = "2.0.3"
 actix-web = "4.11.0"
-actix-4-jwt-auth = "1.2.6"
+actix-4-jwt-auth = "1.2.9"
 #actix-4-jwt-auth = { path = "../actix-4-jwt-auth" }
-actix-files = "0.6.8"
-biscuit = "0.7.0"
+actix-files = "0.7.0"
+biscuit = "0.8.0"    
 #biscuit = { path = "../biscuit/" }
-bytes = "1.10.1"
-chrono = "0.4"
+bytes = "1.12.1"
+chrono = "0.4.45"
 num = "0.4"
-clap = {version = "4.5.48", features = ["derive", "unicode", "env"]}
+clap = {version = "4.6.6", features = ["derive", "unicode", "env"]}
 der-parser = "10.0.0"
-env_logger = "0.11.8"
-futures = "0.3.31"
-futures-core = {version = "0.3.31", default-features = false, features = ["alloc"]}
-futures-util = {version = "0.3.31", default-features = false, features = ["alloc"]}
+env_logger = "0.11.11"
+futures = "0.3.34"
+futures-core = {version = "0.3.34", default-features = false, features = ["alloc"]}
+futures-util = {version = "0.3.34", default-features = false, features = ["alloc"]}
 #num = "0.3"
 tokio = {version = "1.47.1", features = ["full"]}
-nanoid = "0.4.0"
-pem = "3.0.5"
+nanoid = "0.5.0"
+pem = "4.0.0"
 ring = "0.17.14"
 webpki = "0.22.4"
 mio = "1.0.4"
-openssl = "0.10.72"
-data-encoding = "2.9.0"
-serde = "1.0"
-serde_derive = "1.0"
-serde_json = "1.0"
-sysinfo = "0.37.1"
-reqwest = {version = "0.12", features = ["json", "blocking"]}
+openssl = "0.10.81"
+data-encoding = "2.11.1"
+serde = "1.0.229"
+serde_derive = "1.0.229"
+serde_json = "1.0.151"
+serde_urlencoded = "0.7"
+sysinfo = "0.39.6"
+reqwest = {version = "0.13.4", features = ["json", "blocking"]}
 
 # [profile.release]
 # debug = true
 
 # [patch.crates-io]
 # actix-http = {git = "https://github.com/actix/actix-web.git"}
+
+[dev-dependencies]
+actix-http = "3.11.1"

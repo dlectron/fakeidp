@@ -68,13 +68,81 @@ EXPOSED_HOST is the base URL used by the outside world to find the ./well-known/
 
 ## Use it for manual OIDC Login
 
-At this moment it is possible to use a simple implicit flow (response_type=token%20id_token&scope=openid) and trigger
-a login screen. Within the screen you can setup your sub(ject) - most of the times your account ID and your name.
-the .well-known/openid-configuration endpoint returns the proper authorization endpoint (/auth)
+Point your client at the `.well-known/openid-configuration` endpoint and it will find the authorization
+endpoint (`/auth`). Both the **authorization code flow with PKCE** (RFC 7636) and the older **implicit
+flow** are supported; which one you get is decided by the `response_type` you send.
 
-NOTE: PKCE FLOW IS NOT YET SUPPORTED
+Either way you land on a login screen where you set the `sub(ject)` - most of the times your account ID -
+and the name. Use **Add claim** to put any other claim in the tokens, for example `email`,
+`email_verified` or `groups`.
+
+Claim values are read as JSON when they parse as JSON, so `true` becomes a boolean, `1735689600` a number
+and `["admin","user"]` an array. Anything else stays a string. Claims you enter override the defaults the
+service would otherwise pick, so setting `iss`, `aud` or an `exp` in the past is a way to produce a token
+your client should reject.
+
+### Authorization code flow with PKCE
+
+Send `response_type=code` together with a `code_challenge`:
+
+```
+GET /auth?response_type=code
+         &client_id=my-test-app
+         &redirect_uri=http://localhost:3000/callback
+         &scope=openid%20profile
+         &state=xyz
+         &nonce=n-0S6_WzA2Mj
+         &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+         &code_challenge_method=S256
+```
+
+After the login screen the browser is redirected to `redirect_uri?code=...&state=...`. Exchange that code
+at the token endpoint:
+
+```bash
+curl -X POST http://localhost:8080/token \
+  -d grant_type=authorization_code \
+  -d code=<the code from the redirect> \
+  -d redirect_uri=http://localhost:3000/callback \
+  -d client_id=my-test-app \
+  -d code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+```
+
+which returns the usual token response:
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "id_token": "eyJhbGciOiJSUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 12200,
+  "scope": "openid profile"
+}
+```
+
+Both `S256` and `plain` challenge methods work. PKCE is optional: leave the `code_challenge` out of the
+authorization request and the code can be exchanged without a `code_verifier`.
+
+A few deliberate conveniences for a test service:
+
+- Authorization codes live for 10 minutes and are single use, but only a *successful* exchange spends
+  them. A rejected `code_verifier` leaves the code alone so you can fix your client and retry the same
+  code.
+- There is no client registration and no client secret. `client_id` is whatever you send, and it is
+  echoed back as the `aud` claim. `redirect_uri` and `client_id` only have to match between the
+  authorization request and the token request.
+- Codes are held in memory, so restarting the service invalidates the outstanding ones.
+
+### Implicit flow
+
+Send `response_type=token%20id_token&scope=openid` and the tokens come straight back in the fragment of
+the redirect: `redirect_uri#access_token=...&id_token=...&state=...&token_type=bearer`.
 
 ## Example for JWT token creation
+
+Next to its role as the OAuth token endpoint, `/token` doubles as a "sign this for me" shortcut: post a
+bare JSON object and get the encoded JWT back as `text/plain`. The two are told apart by the content
+type, so a form encoded body is treated as a code exchange and anything else as a claim set to sign.
 
 The service runs by default on port 8080 and in order to generate a token, you post the required claimset
 to the /token endpoint

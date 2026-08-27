@@ -8,6 +8,7 @@ use std::process::Command;
 
 mod auth;
 mod checks;
+mod codes;
 mod discovery;
 mod errors;
 mod token;
@@ -17,6 +18,8 @@ mod userinfo;
 pub struct AppState {
     rsa_key_pair: biscuit::jws::Secret,
     exposed_host: String,
+    /// Authorization codes waiting to be exchanged at the token endpoint.
+    auth_codes: codes::AuthCodeStore,
 }
 
 impl AppState {
@@ -24,6 +27,7 @@ impl AppState {
         Self {
             rsa_key_pair: rsa_keys.clone(),
             exposed_host: exposed_host.clone(),
+            auth_codes: codes::AuthCodeStore::default(),
         }
     }
 }
@@ -72,6 +76,11 @@ async fn main() -> std::io::Result<()> {
 
     let oidc = Oidc::new(OidcConfig::Jwks(jwk_set)).await.unwrap();
 
+    // Built once and cloned into every worker: the closure passed to HttpServer::new
+    // runs per worker thread, and a per-worker AppState would mean an authorization
+    // code issued by one worker is unknown to the worker handling the exchange.
+    let app_state = web::Data::new(AppState::new(rsa_keys.clone(), args.exposed_host.clone()));
+
     let mut user = String::from_utf8(Command::new("whoami").output().unwrap().stdout).unwrap();
     user.pop();
     println!("FakeIdP endpoint bound to {} as user {}!", bind, user);
@@ -85,10 +94,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .wrap(cors)
             .app_data(web::Data::new(web::JsonConfig::default().limit(4096)))
-            .app_data(web::Data::new(AppState::new(
-                rsa_keys.clone(),
-                args.exposed_host.clone(),
-            )))
+            .app_data(app_state.clone())
             .app_data(oidc.clone())
             .service(web::resource("/auth/login").route(web::post().to(auth::login)))
             .service(web::resource("/auth").route(web::get().to(auth::auth)))

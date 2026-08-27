@@ -55,7 +55,20 @@ pub async fn openid_configuration(state: web::Data<AppState>) -> Result<HttpResp
       "response_types_supported": [
         "code",
         "id_token",
-        "token"
+        "token",
+        "id_token token"
+      ],
+      "grant_types_supported": [
+        "authorization_code",
+        "implicit"
+      ],
+      "code_challenge_methods_supported": [
+        "S256",
+        "plain"
+      ],
+      "response_modes_supported": [
+        "query",
+        "fragment"
       ],
       "subject_types_supported": [
         "public"
@@ -71,7 +84,9 @@ pub async fn openid_configuration(state: web::Data<AppState>) -> Result<HttpResp
         "offline_access"
       ],
       "token_endpoint_auth_methods_supported": [
-        "client_secret_basic"
+        "client_secret_basic",
+        "client_secret_post",
+        "none"
       ],
       "claims_supported": [
         "aud",

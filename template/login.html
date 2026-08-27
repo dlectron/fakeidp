@@ -20,11 +20,16 @@
 <div class="idp-container">
     <div class="theme-panel">
         <h2 class="theme-heading">Log in to Your Account</h2>
+        <p class="idp-subtle-text">{flow} &middot; {client_id}</p>
         <form method="post" action="/auth/login">
             <input type="hidden" name="redirect_uri" value="{redirect_uri}" />
             <input type="hidden" name="state" value="{state}" />
             <input type="hidden" name="nonce" value="{nonce}" />
             <input type="hidden" name="client_id" value="{client_id}">
+            <input type="hidden" name="response_type" value="{response_type}" />
+            <input type="hidden" name="scope" value="{scope}" />
+            <input type="hidden" name="code_challenge" value="{code_challenge}" />
+            <input type="hidden" name="code_challenge_method" value="{code_challenge_method}" />
             <div class="theme-form-row">
                 <div class="theme-form-label">
                     <label for="sub">Subject</label>
@@ -37,8 +42,14 @@
                 </div>
                 <input tabinidp="2" required id="name" name="name" type="text" class="theme-form-input" placeholder="name" />
             </div>
-            <div id="container"/>
-<!--            <button tabinidp="3" id="add-claim" class="idp-btn theme-btn&#45;&#45;primary" onclick="addClaim();">Add Claim</button>-->
+            <div id="extra-claims"></div>
+            <p class="idp-subtle-text idp-claim-hint">
+                Extra claims are put in both tokens as typed. A value that is valid JSON keeps its
+                type, so <code>true</code>, <code>1735689600</code> and <code>["a","b"]</code> are
+                not strings. Overriding <code>iss</code>, <code>aud</code> or <code>exp</code> here
+                wins over the defaults.
+            </p>
+            <button tabinidp="3" type="button" id="add-claim" class="idp-btn theme-btn--secondary" onclick="addClaim();">Add claim</button>
             <button tabinidp="4" id="submit-login" type="submit" class="idp-btn theme-btn--primary">Login</button>
         </form>
     </div>

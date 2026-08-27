@@ -193,3 +193,55 @@ body {
 .theme-link-back {
     margin-top: 4px;
 }
+.idp-claim-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin: 8px auto;
+    width: 250px;
+}
+
+.idp-claim-input {
+    display: inline-block;
+    margin: 0;
+    min-width: 0;
+    width: 50%;
+}
+
+.idp-claim-remove {
+    background: none;
+    border: 0;
+    color: #999;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+    padding: 0 2px;
+}
+
+.idp-claim-remove:hover {
+    color: #DD1327;
+}
+
+.idp-claim-hint {
+    margin: 16px auto;
+    max-width: 250px;
+    text-align: left;
+}
+
+.idp-claim-hint code {
+    color: #666;
+}
+
+.theme-btn--secondary {
+    background-color: #fff;
+    border: 1px solid #CCC;
+    color: #333;
+    margin-bottom: 10px;
+    min-width: 200px;
+    padding: 6px 12px;
+}
+
+.theme-btn--secondary:hover {
+    background-color: #efefef;
+}
