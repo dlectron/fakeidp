@@ -1,0 +1,20 @@
+[
+  {
+    "sub": "CgVhZG1pbhIFbG9jYWw",
+    "name": "Arend de Minister",
+    "email": "admin@example.com",
+    "email_verified": true
+  },
+  {
+    "sub": "CgRsYW5hEgVsb2NhbA",
+    "name": "Lana del Rey",
+    "email": "lana@example.com",
+    "email_verified": true
+  },
+  {
+    "sub": "CgRzdXp5EgVsb2NhbA",
+    "name": "Susy Q",
+    "email": "suzy@example.com",
+    "email_verified": true
+  }
+]

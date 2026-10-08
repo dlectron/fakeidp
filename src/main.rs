@@ -13,6 +13,7 @@ mod discovery;
 mod errors;
 mod token;
 mod userinfo;
+mod users;
 
 //AppState object is initialized for the App and passed with every request that has a parameter with the AppState as type.
 pub struct AppState {
@@ -20,6 +21,8 @@ pub struct AppState {
     exposed_host: String,
     /// Authorization codes waiting to be exchanged at the token endpoint.
     auth_codes: codes::AuthCodeStore,
+    /// Users offered on the login screen. Empty means the manual login form.
+    users: Vec<users::User>,
 }
 
 impl AppState {
@@ -28,7 +31,12 @@ impl AppState {
             rsa_key_pair: rsa_keys.clone(),
             exposed_host: exposed_host.clone(),
             auth_codes: codes::AuthCodeStore::default(),
+            users: Vec::new(),
         }
+    }
+
+    pub fn with_users(self, users: Vec<users::User>) -> Self {
+        Self { users, ..self }
     }
 }
 
@@ -54,6 +62,28 @@ struct Args {
     #[arg(short = 'f', long, default_value = "./static")]
     folder: String,
     // default value './static'
+    /// JSON file, or folder of *.json files, holding an array of users (claim sets or
+    /// encoded JWTs) to pick from on the login screen instead of typing one in
+    #[arg(short = 'u', long, env = "USERS")]
+    users: Option<String>,
+}
+
+/// An empty `USERS` counts as not given, so a compose file can leave it blank.
+fn load_users(path: Option<&str>) -> Vec<users::User> {
+    let path = match path.filter(|path| !path.is_empty()) {
+        Some(path) => path,
+        None => return Vec::new(),
+    };
+    let users = users::load(std::path::Path::new(path)).unwrap_or_else(|err| {
+        eprintln!("{}", err);
+        std::process::exit(1);
+    });
+    if users.is_empty() {
+        println!("No users found in {}, showing the manual login form", path);
+    } else {
+        println!("Loaded {} users from {}", users.len(), path);
+    }
+    users
 }
 
 /*
@@ -79,7 +109,10 @@ async fn main() -> std::io::Result<()> {
     // Built once and cloned into every worker: the closure passed to HttpServer::new
     // runs per worker thread, and a per-worker AppState would mean an authorization
     // code issued by one worker is unknown to the worker handling the exchange.
-    let app_state = web::Data::new(AppState::new(rsa_keys.clone(), args.exposed_host.clone()));
+    let app_state = web::Data::new(
+        AppState::new(rsa_keys.clone(), args.exposed_host.clone())
+            .with_users(load_users(args.users.as_deref())),
+    );
 
     let mut user = String::from_utf8(Command::new("whoami").output().unwrap().stdout).unwrap();
     user.pop();

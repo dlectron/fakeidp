@@ -1,0 +1,16 @@
+[
+  {
+    "sub": "F82E617D-DEAF-4EE6-8F96-CF3409060CA2",
+    "name": "Arie Ministrone",
+    "email": "admin@example.com",
+    "email_verified": true,
+    "groups": ["admin", "user"]
+  },
+  {
+    "sub": "0B6F3C1E-5A47-4C2B-9E0D-7A2E1F8C4D93",
+    "name": "Ella Mentaire",
+    "email": "user@example.com",
+    "email_verified": false,
+    "groups": ["user"]
+  }
+]

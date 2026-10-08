@@ -47,7 +47,7 @@ pub fn create_jwk_set(secret: Secret) -> JWKSet<Empty> {
 
 pub async fn openid_configuration(state: web::Data<AppState>) -> Result<HttpResponse, Error> {
     let keys_response = json!( {
-      "issuer": format!("{}", state.exposed_host),
+      "issuer": state.exposed_host.to_string(),
       "authorization_endpoint": format!("{}/auth", state.exposed_host),
       "token_endpoint": format!("{}/token", state.exposed_host),
       "jwks_uri": format!("{}/keys", state.exposed_host),

@@ -1,0 +1,21 @@
+# Runs fakeidp with a fixed set of users on the login screen.
+#
+#   docker compose -f examples/docker-compose.yml up --build
+#
+# Then point a client at http://localhost:9090/.well-known/openid-configuration.
+services:
+  fakeidp:
+    build: ..
+    ports:
+      - "9090:9090"
+    environment:
+      PORT: "9090"
+      EXPOSED_HOST: "http://localhost:9090"
+      # A folder: every *.json in it is read, in file name order. Leave USERS
+      # unset (or empty) to get the manual login form instead.
+      USERS: /usr/local/etc/fakeidp/users
+    volumes:
+      # Mount the folder, not the file: editors replace a file on save, which
+      # leaves a single-file bind mount pointing at the old one. Users are read
+      # at startup, so restart the container after editing.
+      - ./users:/usr/local/etc/fakeidp/users:ro

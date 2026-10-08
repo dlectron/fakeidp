@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 
 /// Login form fields that carry protocol state rather than a claim.
-const PROTOCOL_FIELDS: [&str; 8] = [
+const PROTOCOL_FIELDS: [&str; 9] = [
     "response_type",
     "client_id",
     "redirect_uri",
@@ -16,6 +16,8 @@ const PROTOCOL_FIELDS: [&str; 8] = [
     "scope",
     "code_challenge",
     "code_challenge_method",
+    // Index into the users file, sent by the login button next to a listed user.
+    "user",
 ];
 
 /// Authorization request (RFC 6749 section 4.1.1 plus RFC 7636 section 4.3).
@@ -34,7 +36,10 @@ pub struct AuthParameters {
     code_challenge_method: Option<String>,
 }
 
-pub async fn auth(info: web::Query<AuthParameters>) -> Result<HttpResponse, Error> {
+pub async fn auth(
+    app_state: web::Data<AppState>,
+    info: web::Query<AuthParameters>,
+) -> Result<HttpResponse, Error> {
     let flow = if wants_code(&info.response_type) {
         match &info.code_challenge {
             Some(_) => "Authorization code + PKCE",
@@ -56,6 +61,7 @@ pub async fn auth(info: web::Query<AuthParameters>) -> Result<HttpResponse, Erro
         code_challenge = escape_attribute(info.code_challenge.as_deref().unwrap_or_default()),
         code_challenge_method =
             escape_attribute(info.code_challenge_method.as_deref().unwrap_or_default()),
+        credentials = credentials(&app_state.users),
     );
     Ok(HttpResponse::build(StatusCode::OK)
         .content_type("text/html; charset=utf-8")
@@ -70,7 +76,19 @@ pub async fn login(
     app_state: web::Data<AppState>,
     form: web::Form<Vec<(String, String)>>,
 ) -> Result<HttpResponse, Error> {
-    let (fields, claims) = split_form(form.into_inner());
+    let (fields, mut claims) = split_form(form.into_inner());
+
+    // A listed user was picked: their claim set replaces anything typed.
+    if let Some(index) = fields.get("user") {
+        match index
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| app_state.users.get(i))
+        {
+            Some(user) => claims = user.clone(),
+            None => return Ok(HttpResponse::BadRequest().body("Unknown user on the login form")),
+        }
+    }
 
     let client_id = fields.get("client_id").cloned().unwrap_or_default();
     let redirect_uri = match fields.get("redirect_uri") {
@@ -141,6 +159,69 @@ pub async fn login(
             ("token_type", "bearer".to_string()),
         ],
     )))
+}
+
+/// The part of the login form that says who logs in: the manual subject/name/claims
+/// inputs, or, when a users file was given, one row per user with its own login
+/// button and the manual inputs folded away below the list. The button submits the
+/// user's index; the claims stay server side.
+fn credentials(users: &[Map<String, Value>]) -> String {
+    let manual = include_str!("../template/manual_login.html");
+    if users.is_empty() {
+        return manual.to_string();
+    }
+
+    let rows: String = users
+        .iter()
+        .enumerate()
+        .map(|(index, user)| {
+            let text = |claim: &str| match user.get(claim) {
+                Some(Value::String(value)) => escape_attribute(value),
+                Some(other) => escape_attribute(&other.to_string()),
+                None => String::new(),
+            };
+            let others: Map<String, Value> = user
+                .iter()
+                .filter(|(claim, _)| *claim != "sub" && *claim != "name")
+                .map(|(claim, value)| (claim.clone(), value.clone()))
+                .collect();
+            let details = if others.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<details class="idp-user-claims"><summary>{count} more claims</summary><pre>{claims}</pre></details>"#,
+                    count = others.len(),
+                    claims = escape_attribute(
+                        &serde_json::to_string_pretty(&others).unwrap_or_default()
+                    ),
+                )
+            };
+            format!(
+                r#"            <li class="idp-user">
+                <div class="idp-user-row">
+                    <div class="idp-user-id">
+                        <div class="idp-user-name">{name}</div>
+                        <div class="idp-subtle-text">{sub}</div>
+                    </div>
+                    <button type="submit" name="user" value="{index}" formnovalidate class="idp-btn theme-btn--primary idp-user-login">Login</button>
+                </div>
+                {details}
+            </li>
+"#,
+                name = text("name"),
+                sub = text("sub"),
+            )
+        })
+        .collect();
+    // The manual inputs are `required`, which is why the user buttons carry
+    // `formnovalidate`: they submit the same form while those are still empty.
+    // `user` is only sent by the button that was clicked, so the manual Login
+    // button below goes down the typed-claims path as usual.
+    format!(
+        "<ul class=\"idp-users\">\n{}</ul>\n<details class=\"idp-manual\">\n<summary>Log in as someone else</summary>\n{}</details>\n",
+        rows,
+        manual.replace(" autofocus", "")
+    )
 }
 
 /// `code` anywhere in the response type means the client wants an authorization
@@ -252,7 +333,9 @@ mod tests {
     #[actix_rt::test]
     async fn test_auth_renders_login_form_with_pkce_parameters() -> Result<(), Error> {
         let app = test::init_service(
-            App::new().service(web::resource("/auth").route(web::get().to(auth))),
+            App::new()
+                .app_data(test_state())
+                .service(web::resource("/auth").route(web::get().to(auth))),
         )
         .await;
 
@@ -280,7 +363,9 @@ mod tests {
     #[actix_rt::test]
     async fn test_auth_without_optional_parameters() -> Result<(), Error> {
         let app = test::init_service(
-            App::new().service(web::resource("/auth").route(web::get().to(auth))),
+            App::new()
+                .app_data(test_state())
+                .service(web::resource("/auth").route(web::get().to(auth))),
         )
         .await;
 
@@ -291,6 +376,101 @@ mod tests {
         assert_eq!(
             test::call_service(&app, req).await.status(),
             http::StatusCode::OK
+        );
+        Ok(())
+    }
+
+    fn users_state() -> web::Data<AppState> {
+        let rsa_keys = Secret::rsa_keypair_from_file("./keys/private_key.der")
+            .expect("Cannot read RSA keypair");
+        let users = vec![
+            json!({"sub": "alice-1", "name": "Alice <Admin>", "groups": ["admin"]}),
+            json!({"sub": "bob-2", "name": "Bob"}),
+        ]
+        .into_iter()
+        .map(|user| user.as_object().unwrap().clone())
+        .collect();
+        web::Data::new(
+            AppState::new(rsa_keys, "http://localhost:8080".to_string()).with_users(users),
+        )
+    }
+
+    #[actix_rt::test]
+    async fn test_auth_lists_users_instead_of_manual_form() -> Result<(), Error> {
+        let app = test::init_service(
+            App::new()
+                .app_data(users_state())
+                .service(web::resource("/auth").route(web::get().to(auth))),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/auth?client_id=c&redirect_uri=http%3A%2F%2Flocalhost&response_type=code")
+            .to_request();
+        let body = test::read_body(test::call_service(&app, req).await).await;
+        let html = std::str::from_utf8(&body).unwrap();
+
+        assert!(html.contains("Alice &lt;Admin&gt;"));
+        assert!(html.contains("alice-1"));
+        assert!(html.contains(r#"name="user" value="1""#));
+        // Only Alice has claims beyond sub and name to fold away; the other
+        // details element holds the manual form.
+        assert_eq!(
+            html.matches(r#"<details class="idp-user-claims""#).count(),
+            1
+        );
+        assert!(html.contains(r#"<details class="idp-manual">"#));
+        assert!(html.contains(r#"id="sub""#));
+        assert!(html.contains("formnovalidate"));
+        Ok(())
+    }
+
+    #[actix_rt::test]
+    async fn test_login_as_listed_user_uses_their_claims() -> Result<(), Error> {
+        let state = users_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .service(web::resource("/auth/login").route(web::post().to(login))),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/auth/login")
+            .set_form(vec![
+                ("response_type", "code"),
+                ("client_id", "test-client"),
+                ("redirect_uri", "http://localhost:3000/cb"),
+                ("user", "0"),
+            ])
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), http::StatusCode::SEE_OTHER);
+
+        let code = location(&resp)
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string();
+        let stored = state.auth_codes.get(&code).expect("code was not stored");
+        assert_eq!(stored.claims["sub"], json!("alice-1"));
+        assert_eq!(stored.claims["groups"], json!(["admin"]));
+        assert!(!stored.claims.contains_key("user"));
+
+        let req = test::TestRequest::post()
+            .uri("/auth/login")
+            .set_form(vec![
+                ("response_type", "code"),
+                ("redirect_uri", "http://localhost:3000/cb"),
+                ("user", "7"),
+            ])
+            .to_request();
+        assert_eq!(
+            test::call_service(&app, req).await.status(),
+            http::StatusCode::BAD_REQUEST
         );
         Ok(())
     }

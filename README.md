@@ -37,6 +37,8 @@ Options:
           Full base URL of the host the service is found, like https://accounts.google.com [default: http://localhost:8080]
   -f, --folder <FOLDER>
           Folder for the static files to serve [default: ./static]
+  -u, --users <USERS>
+          JSON file, or folder of *.json files, holding an array of users (claim sets or encoded JWTs) to pick from on the login screen instead of typing one in [env: USERS=]
   -h, --help
           Print help information
   -V, --version
@@ -62,6 +64,9 @@ Note that a keypair is provided by default.
 docker run -p9090:9090 -e BIND=0.0.0.0 -e PORT=9090 -e EXPOSED_HOST=http://localhost:9090 spectare/fakeidp:latest
 ```
 
+Add `-e USERS=/users -v $PWD/users:/users:ro` to offer a fixed set of users on the login screen, see
+[A fixed set of users to log in as](#a-fixed-set-of-users-to-log-in-as).
+
 where BIND and PORT are environment variables that allow you to change the endpoint binding and address within the container.
 Note that you need to expose the port you choose and match that with the exposed host name/port.
 EXPOSED_HOST is the base URL used by the outside world to find the ./well-known/openid-configuration and the keys.
@@ -80,6 +85,46 @@ Claim values are read as JSON when they parse as JSON, so `true` becomes a boole
 and `["admin","user"]` an array. Anything else stays a string. Claims you enter override the defaults the
 service would otherwise pick, so setting `iss`, `aud` or an `exp` in the past is a way to produce a token
 your client should reject.
+
+### A fixed set of users to log in as
+
+Typing a subject and claims on every login gets old. Pass `-u`/`--users` (or set `USERS`) to a JSON file
+holding an array of users and the login screen lists them instead: subject and name up front, the other
+claims folded away under a click, and a **Login** button next to each that runs the flow as that user. The manual
+form is still there, folded away under **Log in as someone else** below the list. Without the option you get the
+manual form directly.
+
+```json
+[
+  { "sub": "F82E617D", "name": "Arie Ministrone", "email": "admin@example.com", "groups": ["admin"] },
+  "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwQjZGM0MxRSIsIm5hbWUiOiJFbGxhIn0.c2ln"
+]
+```
+
+An entry is either a claim set, used verbatim (so an `exp` in it is the `exp` you get), or an encoded JWT, of
+which only the payload is read. The signature is not checked, and `iat`, `exp`, `nbf` and `auth_time` are
+dropped from it, because a token copied from somewhere was minted in the past. Every entry needs a string `sub`;
+the service refuses to start otherwise.
+
+`-u` also takes a folder, in which case every `*.json` file in it is read in file name order. That is the way to
+use it with docker compose: mount the folder, not the file, because editors replace a file on save and a
+single-file bind mount keeps pointing at the old one. Users are read at startup, so restart after editing.
+
+```yaml
+services:
+  fakeidp:
+    image: spectare/fakeidp:latest
+    ports:
+      - "9090:9090"
+    environment:
+      PORT: "9090"
+      EXPOSED_HOST: "http://localhost:9090"
+      USERS: /usr/local/etc/fakeidp/users
+    volumes:
+      - ./users:/usr/local/etc/fakeidp/users:ro
+```
+
+A runnable version, with two example users, is in [examples/](examples/docker-compose.yml).
 
 ### Authorization code flow with PKCE
 

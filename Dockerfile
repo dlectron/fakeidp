@@ -72,6 +72,11 @@ ENV PORT="8080"
 
 ENV EXPOSED_HOST="http://localhost:8080"
 
+# Optional: a JSON file, or a folder of *.json files, with the users to offer on
+# the login screen. The binary reads USERS itself, so CMD needs no flag for it;
+# empty means the manual login form. See examples/docker-compose.yml.
+ENV USERS=""
+
 # exec so the service replaces the shell and becomes PID 1: without it SIGTERM
 # stops at /bin/sh and every `docker stop` waits out the full timeout.
 CMD ["sh", "-c", "exec fakeidp /usr/local/etc/private_key.der -p ${PORT} -b ${BIND} -e ${EXPOSED_HOST} -f /usr/local/fakeidp/static"]

@@ -30,27 +30,7 @@
             <input type="hidden" name="scope" value="{scope}" />
             <input type="hidden" name="code_challenge" value="{code_challenge}" />
             <input type="hidden" name="code_challenge_method" value="{code_challenge_method}" />
-            <div class="theme-form-row">
-                <div class="theme-form-label">
-                    <label for="sub">Subject</label>
-                </div>
-                <input tabinidp="1" required id="sub" name="sub" type="text" class="theme-form-input" placeholder="sub(ject) as required in JWT"  autofocus />
-            </div>
-            <div class="theme-form-row">
-                <div class="theme-form-label">
-                    <label for="name">Name</label>
-                </div>
-                <input tabinidp="2" required id="name" name="name" type="text" class="theme-form-input" placeholder="name" />
-            </div>
-            <div id="extra-claims"></div>
-            <p class="idp-subtle-text idp-claim-hint">
-                Extra claims are put in both tokens as typed. A value that is valid JSON keeps its
-                type, so <code>true</code>, <code>1735689600</code> and <code>["a","b"]</code> are
-                not strings. Overriding <code>iss</code>, <code>aud</code> or <code>exp</code> here
-                wins over the defaults.
-            </p>
-            <button tabinidp="3" type="button" id="add-claim" class="idp-btn theme-btn--secondary" onclick="addClaim();">Add claim</button>
-            <button tabinidp="4" id="submit-login" type="submit" class="idp-btn theme-btn--primary">Login</button>
+{credentials}
         </form>
     </div>
 </div>
