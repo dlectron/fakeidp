@@ -1,0 +1,16 @@
+# Host build artifacts must never enter the image: they are 1.5G of the wrong
+# platform's objects and would land on top of the container's own target dir.
+target/
+
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+
+# CI, docs and manual test scripts play no part in the build.
+.circleci/
+.github/
+.scripts/
+test/
+*.md
+LICENSE

@@ -56,10 +56,8 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::OK);
 
         let response_body = test::read_body(resp).await;
-        let body_str = match str::from_utf8(&response_body) {
-            Ok(v) => v,
-            Err(_e) => "Error with parsing result from bytes to string",
-        };
+        let body_str = str::from_utf8(&response_body)
+            .unwrap_or("Error with parsing result from bytes to string");
         let p: Value = serde_json::from_str(body_str).unwrap();
 
         println!("Value : {:?}", p);

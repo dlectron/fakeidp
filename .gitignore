@@ -5,3 +5,5 @@
 
 .DS_Store
 
+# coverage output from .scripts/coverage.sh
+lcov.info

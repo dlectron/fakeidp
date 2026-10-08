@@ -1,37 +1,78 @@
 version: 2.1
-#orbs:
-#  codecov: codecov/codecov@1.0.5
-#docker-workflow:
+
 jobs:
   build:
     docker:
-      - image: cimg/rust:1.90.0
+      # Keep in step with the Dockerfile's builder image: testing on one Rust
+      # release and shipping a binary built by another is how a release breaks
+      # in a way CI cannot see.
+      - image: cimg/rust:1.98.0
 
     environment:
-      # Set your codecov token if your repository is private.
-      CODECOV_TOKEN: "ab1ebf03-ceaa-44e5-a5c3-991540225856"
       TZ: "/usr/share/zoneinfo/Europe/Paris"
 
     steps:
       - checkout
       - restore_cache:
-          key: project-cache
+          keys:
+            # Exact match for this dependency set, otherwise the newest cache
+            # from any other set, which still saves most of the compile.
+            - project-cache-v2-{{ checksum "Cargo.lock" }}
+            - project-cache-v2-
+      - run:
+          name: Formatting
+          command: cargo fmt --all -- --check
+      - run:
+          name: Clippy
+          command: cargo clippy --all-targets --all-features -- -D warnings
       - run:
           name: Stable Build
           command: |
-            cargo build
+            cargo build --locked
       - run:
           name: Test
-          command: cargo test --verbose --jobs 1 --all
+          command: cargo test --verbose --jobs 1 --all --locked
       - run:
-          name: Upload Coverage
+          name: Coverage
           command: |
-            .scripts/codecov.sh
+            .scripts/coverage.sh
+      - store_artifacts:
+          path: lcov.info
       - save_cache:
-          key: project-cache
+          key: project-cache-v2-{{ checksum "Cargo.lock" }}
           paths:
             - "~/.cargo"
             - "./target"
+
+  # The publish jobs below are the first thing to touch the Dockerfile, and they
+  # only run on main and on tags. This builds the image on every branch so that a
+  # broken Dockerfile surfaces on the pull request instead of at release time.
+  docker-build:
+    docker:
+      - image: cimg/base:stable
+    resource_class: large
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: default
+      - run:
+          name: Build the image for the native platform
+          command: |
+            docker build \
+              --build-arg VERSION=ci-${CIRCLE_SHA1} \
+              --build-arg COMMITID=${CIRCLE_SHA1} \
+              -t fakeidp:ci .
+      - run:
+          name: Smoke test the image
+          command: |
+            # Runs the binary inside the runtime stage, which is what catches a
+            # builder and runtime that disagree about glibc or OpenSSL, plus the
+            # file modes that decide whether the service can read its own key
+            # and static files.
+            docker run --rm fakeidp:ci fakeidp --version
+            test "$(docker run --rm fakeidp:ci id -u)" = "1001"
+            test "$(docker run --rm fakeidp:ci sh -c 'ls /usr/local/fakeidp/static | wc -l')" -gt 0
+            docker run --rm fakeidp:ci sh -c 'head -c1 /usr/local/etc/private_key.der > /dev/null'
 
   publish-docker-latest:
     docker:
@@ -75,6 +116,7 @@ jobs:
             docker buildx create --use multi-arch-context --name multi-arch-builder
       - run:
           name: Docker build and push
+          no_output_timeout: 1.5h
           command: |
             echo `git describe --tags --exact-match` > /tmp/version.txt
             TAG=$(cat /tmp/version.txt)
@@ -92,10 +134,12 @@ workflows:
   ci:
     jobs:
       - build
+      - docker-build
       - publish-docker-latest:
           context: DOCKER
           requires:
             - build
+            - docker-build
           filters:
             branches:
               only: main

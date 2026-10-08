@@ -69,7 +69,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let default_keyfile = "./keys/private_key.der".to_string();
-    let keyfile_to_use = &args.keyfile.unwrap_or_else(|| default_keyfile);
+    let keyfile_to_use = &args.keyfile.unwrap_or(default_keyfile);
     let rsa_keys = Secret::rsa_keypair_from_file(keyfile_to_use).expect("Cannot read RSA keypair");
 
     let jwk_set = discovery::create_jwk_set(rsa_keys.clone());

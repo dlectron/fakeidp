@@ -48,7 +48,7 @@ fn sign_claim_set(state: &AppState, claims_req: &Bytes) -> Result<HttpResponse, 
     let signing_secret = &state.rsa_key_pair;
 
     let res: Result<Value, Error> = str::from_utf8(claims_req)
-        .map(|s| serde_json::from_str(s))
+        .map(serde_json::from_str)
         .unwrap()
         .map_err(error::ErrorInternalServerError);
 
@@ -264,7 +264,7 @@ pub fn create_jwt(signing_secret: &Secret, claims: Value) -> String {
         },
     );
     decoded_token
-        .encode(&signing_secret)
+        .encode(signing_secret)
         .unwrap()
         .unwrap_encoded()
         .to_string()
@@ -383,10 +383,8 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::OK);
 
         let response_body = test::read_body(resp).await;
-        let body_str = match str::from_utf8(&response_body) {
-            Ok(v) => v,
-            Err(_e) => "Error with parsing result from bytes to string",
-        };
+        let body_str = str::from_utf8(&response_body)
+            .unwrap_or("Error with parsing result from bytes to string");
 
         assert_eq!(body_str, "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjIwMjAtMDEtMjkifQ.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwODAvbW9jayIsInN1YiI6IkNnVmhaRzFwYmhJRmJHOWpZV3ciLCJhdWQiOiJjYWZpZW5uZS11aSIsImV4cCI6MTU3NjU2ODQ5NSwiaWF0IjoxNTc2NDgyMDk1LCJhdF9oYXNoIjoienFLaEwtc1Y2VE5KVUZRU0Y3UHdMUSIsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6ImFkbWluIn0.KxJNef8u8N8t7CfHSiha4yFpiivRGcR_zmNNAN9CJGBGuX5i0h9cYw1AGupNvBe5VEQTpp_hk3_S5lJE8qTw60ey9zUfbbiMX3uWUUsqNVcCv51kF5hzPA0eQffZMpMRBSzJa1WgY39yQATy2eBoDEt_JPXixGOy6Xl9Op9VoDozFyVYtG31oUSM4rFhSqTAYFrRfXIdrYIaBkcqd5FFRRidSb6mSgZwl9YT5gCr2LF7fLAePqAEJqiQP3weOJNytv52OMRMjosmO6bnQQvNx6Hq7M3o6n-nfWa8SE7GlvV4MJ8b-HR8n6xQ4EZYZ09hBM2HYlS1CqpAjHs0OM3z9g");
 
