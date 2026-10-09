@@ -305,3 +305,13 @@ body {
     cursor: pointer;
     font-size: 13px;
 }
+
+/* Set by a styling folder holding a background.<ext>; the image itself comes
+   from an inline style on <body>. Override any of this in the styling folder's custom.css. */
+.theme-body--image {
+    background-attachment: fixed;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    min-height: 100vh;
+}

@@ -1,0 +1,20 @@
+/* Loaded after the built-in /static/main.css, so anything here wins.
+   Remove a file from this folder to fall back to the default for it. */
+
+.theme-navbar {
+    background-color: rgba(20, 33, 61, 0.85);
+    box-shadow: none;
+}
+
+.theme-panel {
+    background-color: rgba(255, 255, 255, 0.92);
+    border-radius: 8px;
+}
+
+.theme-btn--primary {
+    background-color: #14213D;
+}
+
+.theme-btn--primary:hover {
+    background-color: #2D3E66;
+}

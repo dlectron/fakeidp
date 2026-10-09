@@ -11,6 +11,7 @@ mod checks;
 mod codes;
 mod discovery;
 mod errors;
+mod styling;
 mod token;
 mod userinfo;
 mod users;
@@ -23,6 +24,8 @@ pub struct AppState {
     auth_codes: codes::AuthCodeStore,
     /// Users offered on the login screen. Empty means the manual login form.
     users: Vec<users::User>,
+    /// Optional folder restyling the login screen.
+    styling: styling::Styling,
 }
 
 impl AppState {
@@ -32,11 +35,16 @@ impl AppState {
             exposed_host: exposed_host.clone(),
             auth_codes: codes::AuthCodeStore::default(),
             users: Vec::new(),
+            styling: styling::Styling::default(),
         }
     }
 
     pub fn with_users(self, users: Vec<users::User>) -> Self {
         Self { users, ..self }
+    }
+
+    pub fn with_styling(self, styling: styling::Styling) -> Self {
+        Self { styling, ..self }
     }
 }
 
@@ -66,6 +74,11 @@ struct Args {
     /// encoded JWTs) to pick from on the login screen instead of typing one in
     #[arg(short = 'u', long, env = "USERS")]
     users: Option<String>,
+    /// Folder restyling the login screen: custom.css, logo.<ext> and
+    /// background.<ext> are picked up when present, and the folder is served
+    /// under /styling
+    #[arg(short = 's', long, env = "STYLING")]
+    styling: Option<String>,
 }
 
 /// An empty `USERS` counts as not given, so a compose file can leave it blank.
@@ -84,6 +97,22 @@ fn load_users(path: Option<&str>) -> Vec<users::User> {
         println!("Loaded {} users from {}", users.len(), path);
     }
     users
+}
+
+/// An empty `STYLING` counts as not given, like `USERS`. A folder that is not
+/// there is a mistake worth stopping for: it would otherwise look like the
+/// styling folder was silently ignored.
+fn load_styling(path: Option<&str>) -> styling::Styling {
+    let path = match path.filter(|path| !path.is_empty()) {
+        Some(path) => std::path::PathBuf::from(path),
+        None => return styling::Styling::default(),
+    };
+    if !path.is_dir() {
+        eprintln!("Styling folder {} is not a directory", path.display());
+        std::process::exit(1);
+    }
+    println!("Styling the login screen from {}", path.display());
+    styling::Styling::new(Some(path))
 }
 
 /*
@@ -111,8 +140,10 @@ async fn main() -> std::io::Result<()> {
     // code issued by one worker is unknown to the worker handling the exchange.
     let app_state = web::Data::new(
         AppState::new(rsa_keys.clone(), args.exposed_host.clone())
-            .with_users(load_users(args.users.as_deref())),
+            .with_users(load_users(args.users.as_deref()))
+            .with_styling(load_styling(args.styling.as_deref())),
     );
+    let styling_folder = app_state.styling.folder().map(|f| f.to_path_buf());
 
     let mut user = String::from_utf8(Command::new("whoami").output().unwrap().stdout).unwrap();
     user.pop();
@@ -140,6 +171,11 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/keys").route(web::get().to(discovery::keys)))
             .service(web::resource("/health").route(web::get().to(checks::check)))
             .service(fs::Files::new("/static", args.folder.as_str()).show_files_listing())
+            .configure(|cfg| {
+                if let Some(folder) = &styling_folder {
+                    cfg.service(fs::Files::new(styling::URL_PREFIX, folder));
+                }
+            })
     })
     .shutdown_timeout(5)
     .bind(bind)?

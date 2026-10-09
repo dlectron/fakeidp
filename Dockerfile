@@ -77,6 +77,11 @@ ENV EXPOSED_HOST="http://localhost:8080"
 # empty means the manual login form. See examples/docker-compose.yml.
 ENV USERS=""
 
+# Optional: a folder with custom.css, logo.<ext> and/or background.<ext> to
+# restyle the login screen, served under /styling. Read by the binary itself,
+# like USERS; empty means the built-in look.
+ENV STYLING=""
+
 # exec so the service replaces the shell and becomes PID 1: without it SIGTERM
 # stops at /bin/sh and every `docker stop` waits out the full timeout.
 CMD ["sh", "-c", "exec fakeidp /usr/local/etc/private_key.der -p ${PORT} -b ${BIND} -e ${EXPOSED_HOST} -f /usr/local/fakeidp/static"]

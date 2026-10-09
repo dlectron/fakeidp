@@ -39,6 +39,8 @@ Options:
           Folder for the static files to serve [default: ./static]
   -u, --users <USERS>
           JSON file, or folder of *.json files, holding an array of users (claim sets or encoded JWTs) to pick from on the login screen instead of typing one in [env: USERS=]
+  -s, --styling <STYLING>
+          Folder restyling the login screen: custom.css, logo.<ext> and background.<ext> are picked up when present, and the folder is served under /styling [env: STYLING=]
   -h, --help
           Print help information
   -V, --version
@@ -125,6 +127,36 @@ services:
 ```
 
 A runnable version, with two example users, is in [examples/](examples/docker-compose.yml).
+
+### Restyling the login screen
+
+Pass `-s`/`--styling` (or set `STYLING`) to a folder to change the look of the login screen without
+rebuilding. It is served under `/styling`, and these files in it are picked up when present:
+
+| File | Effect |
+|---|---|
+| `custom.css` | Linked after the built-in `/static/main.css`, so its rules override the defaults |
+| `logo.<ext>` | Replaces the logo in the navbar |
+| `background.<ext>` | Covers the page behind the login panel (`cover`, centred, fixed) |
+
+`<ext>` is one of `svg`, `png`, `webp`, `jpg`, `jpeg` or `gif`, looked for in that order. Every file is
+optional; leave one out and you get the default for it. Other files in the folder, such as fonts or images
+your `custom.css` refers to, are served too, at `/styling/<file>`. The folder is checked on every page
+load, so unlike the users file there is no need to restart after a change. The service refuses to start if
+the folder does not exist.
+
+The background's size and position come from the `.theme-body--image` class in `main.css`; override it in
+`custom.css` to tile or anchor the image instead. With docker compose, mount the folder:
+
+```yaml
+    environment:
+      STYLING: /usr/local/etc/fakeidp/styling
+    volumes:
+      - ./styling:/usr/local/etc/fakeidp/styling:ro
+```
+
+[examples/styling](examples/styling) has one of each file and is used by the
+[example compose file](examples/docker-compose.yml).
 
 ### Authorization code flow with PKCE
 

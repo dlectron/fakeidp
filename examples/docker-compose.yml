@@ -1,4 +1,5 @@
-# Runs fakeidp with a fixed set of users on the login screen.
+# Runs fakeidp with a fixed set of users on the login screen, restyled by the
+# files in ./styling.
 #
 #   docker compose -f examples/docker-compose.yml up --build
 #
@@ -14,8 +15,13 @@ services:
       # A folder: every *.json in it is read, in file name order. Leave USERS
       # unset (or empty) to get the manual login form instead.
       USERS: /usr/local/etc/fakeidp/users
+      # custom.css, logo.<ext> and background.<ext> in this folder restyle the
+      # login screen; each is optional. Leave STYLING unset for the defaults.
+      STYLING: /usr/local/etc/fakeidp/styling
     volumes:
       # Mount the folder, not the file: editors replace a file on save, which
       # leaves a single-file bind mount pointing at the old one. Users are read
       # at startup, so restart the container after editing.
       - ./users:/usr/local/etc/fakeidp/users:ro
+      # Looked at on every page load, so edits show up without a restart.
+      - ./styling:/usr/local/etc/fakeidp/styling:ro

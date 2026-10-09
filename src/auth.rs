@@ -49,8 +49,13 @@ pub async fn auth(
         "Implicit"
     };
 
+    let branding = app_state.styling.branding();
     let body = format!(
         include_str!("../template/login.html"),
+        stylesheet = branding.stylesheet,
+        logo = branding.logo,
+        body_class = branding.body_class,
+        body_style = branding.body_style,
         flow = flow,
         client_id = escape_attribute(&info.client_id),
         redirect_uri = escape_attribute(&info.redirect_uri),
@@ -377,6 +382,42 @@ mod tests {
             test::call_service(&app, req).await.status(),
             http::StatusCode::OK
         );
+        Ok(())
+    }
+
+    #[actix_rt::test]
+    async fn test_auth_applies_the_styling_folder() -> Result<(), Error> {
+        let rsa_keys = Secret::rsa_keypair_from_file("./keys/private_key.der")
+            .expect("Cannot read RSA keypair");
+        let folder =
+            std::env::temp_dir().join(format!("fakeidp-auth-styling-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("custom.css"), "").unwrap();
+        std::fs::write(folder.join("logo.svg"), "").unwrap();
+        std::fs::write(folder.join("background.png"), "").unwrap();
+        let state = web::Data::new(
+            AppState::new(rsa_keys, "http://localhost:8080".to_string())
+                .with_styling(crate::styling::Styling::new(Some(folder.clone()))),
+        );
+        let app = test::init_service(
+            App::new()
+                .app_data(state)
+                .service(web::resource("/auth").route(web::get().to(auth))),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/auth?client_id=c&redirect_uri=http%3A%2F%2Flocalhost&response_type=code")
+            .to_request();
+        let body = test::read_body(test::call_service(&app, req).await).await;
+        let html = std::str::from_utf8(&body).unwrap();
+        std::fs::remove_dir_all(folder).unwrap();
+
+        assert!(html.contains(r#"<link href="/styling/custom.css" rel="stylesheet">"#));
+        assert!(html.contains(r#"src="/styling/logo.svg""#));
+        assert!(html.contains(
+            r#"<body class="theme-body theme-body--image" style="background-image: url('/styling/background.png')">"#
+        ));
         Ok(())
     }
 
