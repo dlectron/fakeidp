@@ -2,10 +2,38 @@
 # Cargo Build Stage
 # ------------------------------------------------------------------------------
 # Builder and runtime deliberately share the same Debian release. The binary
-# links the distribution's glibc and OpenSSL dynamically, so a builder from a
-# different distro (or a CI convenience image) produces something that only
-# fails once the container starts.
-FROM rust:1.98-trixie AS cargo-build
+# links the distribution's glibc dynamically, so a builder from a different
+# distro (or a CI convenience image) produces something that only fails once
+# the container starts. The Debian cross toolchains below link against that
+# same release's glibc, so this holds for cross builds too.
+#
+# The builder always runs on the build host's own platform and cross-compiles
+# for the target. Compiling arm64 under QEMU emulation took close to an hour
+# and ran the multi-arch publish into CircleCI's job time limit.
+FROM --platform=$BUILDPLATFORM rust:1.98-trixie AS cargo-build
+
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+
+# Pick the Rust target and, when it differs from the host, install its C cross
+# toolchain (ring and zstd-sys need one) and tell cargo which compiler and
+# linker to use. Debian names the package gcc-x86-64-linux-gnu but the tool it
+# installs x86_64-linux-gnu-gcc, hence the separate pkg and gcc names.
+RUN case "$TARGETPLATFORM" in \
+      linux/amd64) triple=x86_64-unknown-linux-gnu;  pkg=x86-64;  gcc=x86_64-linux-gnu-gcc;  arch=amd64 ;; \
+      linux/arm64) triple=aarch64-unknown-linux-gnu; pkg=aarch64; gcc=aarch64-linux-gnu-gcc; arch=arm64 ;; \
+      *) echo "unsupported TARGETPLATFORM: $TARGETPLATFORM" >&2; exit 1 ;; \
+    esac \
+    && echo "$triple" > /rust-target \
+    && touch /cargo-env \
+    && if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then \
+         apt-get update \
+         && apt-get install -y --no-install-recommends gcc-${pkg}-linux-gnu libc6-dev-${arch}-cross \
+         && rm -rf /var/lib/apt/lists/* \
+         && rustup target add "$triple" \
+         && printf 'export CARGO_TARGET_%s_LINKER=%s\nexport CC_%s=%s\n' \
+              "$(echo "$triple" | tr a-z- A-Z_)" "$gcc" "$(echo "$triple" | tr - _)" "$gcc" > /cargo-env; \
+       fi
 
 WORKDIR /usr/src/fakeidp
 
@@ -14,12 +42,16 @@ WORKDIR /usr/src/fakeidp
 # [dependencies] here regardless of what the stub actually uses.
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --locked
+RUN . /cargo-env && cargo build --release --locked --target "$(cat /rust-target)"
 
 # The real sources. Cargo decides by mtime and COPY preserves the context's, so
-# touch the entrypoint to be sure the stub's artifact is not reused.
+# touch the entrypoint to be sure the stub's artifact is not reused. The binary
+# is copied to a fixed path so the final stage need not know the target triple.
 COPY . .
-RUN touch src/main.rs && cargo build --release --locked
+RUN touch src/main.rs \
+    && . /cargo-env \
+    && cargo build --release --locked --target "$(cat /rust-target)" \
+    && cp "target/$(cat /rust-target)/release/fakeidp" /usr/local/bin/fakeidp
 
 # ------------------------------------------------------------------------------
 # Final Stage
@@ -28,7 +60,7 @@ RUN touch src/main.rs && cargo build --release --locked
 FROM debian:trixie-slim
 
 # `ldd` on the built binary shows only libc/libm/libgcc: reqwest resolves to
-# rustls and nothing in the source touches the openssl crate, so no OpenSSL
+# rustls and the unused openssl crate is no longer a dependency, so no OpenSSL
 # runtime is required. ca-certificates is kept as the one cheap insurance
 # against a future outbound TLS call failing in a confusing way.
 RUN apt-get update \
@@ -41,7 +73,7 @@ RUN groupadd --system --gid 1000 runtme \
 # Everything the service reads stays owned by root and is only readable to the
 # account that runs it, so a compromised process cannot rewrite its own binary,
 # its signing key or the pages it serves.
-COPY --from=cargo-build --chown=root:root --chmod=755 /usr/src/fakeidp/target/release/fakeidp /usr/local/bin/fakeidp
+COPY --from=cargo-build --chown=root:root --chmod=755 /usr/local/bin/fakeidp /usr/local/bin/fakeidp
 
 COPY --from=cargo-build --chown=root:runtme --chmod=440 /usr/src/fakeidp/keys/private_key.der /usr/local/etc/private_key.der
 
