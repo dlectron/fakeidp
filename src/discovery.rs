@@ -60,7 +60,9 @@ pub async fn openid_configuration(state: web::Data<AppState>) -> Result<HttpResp
       ],
       "grant_types_supported": [
         "authorization_code",
-        "implicit"
+        "implicit",
+        "client_credentials",
+        crate::grants::TOKEN_EXCHANGE
       ],
       "code_challenge_methods_supported": [
         "S256",
@@ -89,7 +91,9 @@ pub async fn openid_configuration(state: web::Data<AppState>) -> Result<HttpResp
         "none"
       ],
       "claims_supported": [
+        "act",
         "aud",
+        "azp",
         "email",
         "email_verified",
         "exp",
@@ -135,6 +139,53 @@ mod tests {
         println!("Value : {:?}", p);
         assert_eq!(p["keys"][0]["e"], json!("AQAB"));
 
+        Ok(())
+    }
+
+    #[actix_rt::test]
+    async fn test_discovery_lists_the_machine_to_machine_grants() -> Result<(), Error> {
+        let rsa_keys = Secret::rsa_keypair_from_file("./keys/private_key.der")
+            .expect("Cannot read RSA keypair");
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(AppState::new(
+                    rsa_keys,
+                    "http://localhost:8080".to_string(),
+                )))
+                .service(web::resource("/").route(web::get().to(openid_configuration))),
+        )
+        .await;
+
+        let resp = test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        let config: Value = test::read_body_json(resp).await;
+        assert_eq!(
+            config["grant_types_supported"],
+            json!([
+                "authorization_code",
+                "implicit",
+                "client_credentials",
+                "urn:ietf:params:oauth:grant-type:token-exchange"
+            ])
+        );
+        assert_eq!(
+            config["token_endpoint"],
+            json!("http://localhost:8080/token")
+        );
+        // What the shared token endpoint accepts as client identification (RFC 8414 §2).
+        assert_eq!(
+            config["token_endpoint_auth_methods_supported"],
+            json!(["client_secret_basic", "client_secret_post", "none"])
+        );
+        // The claims the machine-to-machine grants add: azp on every token, act on an
+        // exchanged one (RFC 8693 §4.1).
+        let claims = config["claims_supported"].as_array().unwrap();
+        for claim in ["azp", "act", "sub", "aud"] {
+            assert!(
+                claims.contains(&json!(claim)),
+                "claims_supported lacks {claim}"
+            );
+        }
         Ok(())
     }
 }

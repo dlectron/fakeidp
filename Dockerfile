@@ -10,15 +10,22 @@
 # The builder always runs on the build host's own platform and cross-compiles
 # for the target. Compiling arm64 under QEMU emulation took close to an hour
 # and ran the multi-arch publish into CircleCI's job time limit.
-FROM --platform=$BUILDPLATFORM rust:1.98-trixie AS cargo-build
+#
+# The slim variant has the C toolchain the native dependencies (ring, aws-lc-sys,
+# zstd-sys) need and little else, which keeps the builder's vulnerability
+# count a fraction of the full image's. Nothing from this stage ships.
+FROM --platform=$BUILDPLATFORM rust:1.98-slim-trixie AS cargo-build
 
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 
 # Pick the Rust target and, when it differs from the host, install its C cross
-# toolchain (ring and zstd-sys need one) and tell cargo which compiler and
-# linker to use. Debian names the package gcc-x86-64-linux-gnu but the tool it
-# installs x86_64-linux-gnu-gcc, hence the separate pkg and gcc names.
+# toolchain and tell cargo which compiler and linker to use. Debian names the
+# package gcc-x86-64-linux-gnu but the tool it installs x86_64-linux-gnu-gcc,
+# hence the separate pkg and gcc names.
+#
+# The upgrade picks up the Debian security fixes published since the rust image
+# was last rebuilt; scanners otherwise report those against this stage.
 RUN case "$TARGETPLATFORM" in \
       linux/amd64) triple=x86_64-unknown-linux-gnu;  pkg=x86-64;  gcc=x86_64-linux-gnu-gcc;  arch=amd64 ;; \
       linux/arm64) triple=aarch64-unknown-linux-gnu; pkg=aarch64; gcc=aarch64-linux-gnu-gcc; arch=arm64 ;; \
@@ -26,14 +33,15 @@ RUN case "$TARGETPLATFORM" in \
     esac \
     && echo "$triple" > /rust-target \
     && touch /cargo-env \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then \
-         apt-get update \
-         && apt-get install -y --no-install-recommends gcc-${pkg}-linux-gnu libc6-dev-${arch}-cross \
-         && rm -rf /var/lib/apt/lists/* \
+         apt-get install -y --no-install-recommends gcc-${pkg}-linux-gnu libc6-dev-${arch}-cross \
          && rustup target add "$triple" \
          && printf 'export CARGO_TARGET_%s_LINKER=%s\nexport CC_%s=%s\n' \
               "$(echo "$triple" | tr a-z- A-Z_)" "$gcc" "$(echo "$triple" | tr - _)" "$gcc" > /cargo-env; \
-       fi
+       fi \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/fakeidp
 
@@ -53,29 +61,41 @@ RUN touch src/main.rs \
     && cargo build --release --locked --target "$(cat /rust-target)" \
     && cp "target/$(cat /rust-target)/release/fakeidp" /usr/local/bin/fakeidp
 
+# The key's directory is laid out here, with the modes it must end up with,
+# because the runtime image has no shell to fix them up in and `COPY --chmod`
+# would apply the key's 0440 to any parent directory it has to create as well.
+# A directory without its execute bit cannot be entered, so the service would
+# fail to open the key. Debian happened to ship /usr/local/etc; distroless
+# does not.
+RUN install -d -m 755 /out/etc \
+    && install -m 440 keys/private_key.der /out/etc/private_key.der
+
 # ------------------------------------------------------------------------------
 # Final Stage
 # ------------------------------------------------------------------------------
 
-FROM debian:trixie-slim
-
+# Distroless: Debian 13's glibc, libgcc, ca-certificates and tzdata, and nothing
+# else. No shell, no package manager, no apt database for a scanner to report
+# against, which is what takes the image's vulnerability count to zero. The
+# same Debian release as the builder, so the dynamically linked glibc matches.
+#
 # `ldd` on the built binary shows only libc/libm/libgcc: reqwest resolves to
 # rustls and the unused openssl crate is no longer a dependency, so no OpenSSL
-# runtime is required. ca-certificates is kept as the one cheap insurance
-# against a future outbound TLS call failing in a confusing way.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system --gid 1000 runtme \
-    && useradd --system --uid 1001 --gid runtme --shell /usr/sbin/nologin --no-create-home runtme
+# runtime is required and the `cc` flavour (rather than `base`) is enough.
+#
+# The image ships the `nonroot` account (uid and gid 65532) ready-made, in
+# place of the `runtme` user the Debian image used to create.
+FROM gcr.io/distroless/cc-debian13:nonroot
 
 # Everything the service reads stays owned by root and is only readable to the
 # account that runs it, so a compromised process cannot rewrite its own binary,
 # its signing key or the pages it serves.
 COPY --from=cargo-build --chown=root:root --chmod=755 /usr/local/bin/fakeidp /usr/local/bin/fakeidp
 
-COPY --from=cargo-build --chown=root:runtme --chmod=440 /usr/src/fakeidp/keys/private_key.der /usr/local/etc/private_key.der
+# Copied as a directory, so the 0755 on it and the 0440 on the key both come
+# from the builder's layout above; --chown resolves `nonroot` against this
+# image's /etc/group.
+COPY --from=cargo-build --chown=root:nonroot /out/etc/ /usr/local/etc/
 
 # No --chmod here: it would apply to the directory as well as the files, and a
 # static dir without its execute bit cannot be traversed, so nothing under
@@ -94,13 +114,16 @@ LABEL org.opencontainers.image.title="fakeidp" \
       org.opencontainers.image.source="https://github.com/dlectron/fakeidp" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-USER runtme
+USER nonroot
 
 EXPOSE 8080
 
-ENV BIND="0.0.0.0"
+# The binary reads these three itself (clap `env`), so CMD needs no shell to
+# turn them into flags. Explicit flags on the command line still win. The
+# prefix keeps a PORT or BIND set by the environment from being picked up.
+ENV FAKE_BIND="0.0.0.0"
 
-ENV PORT="8080"
+ENV FAKE_PORT="8080"
 
 ENV EXPOSED_HOST="http://localhost:8080"
 
@@ -114,6 +137,13 @@ ENV USERS=""
 # like USERS; empty means the built-in look.
 ENV STYLING=""
 
-# exec so the service replaces the shell and becomes PID 1: without it SIGTERM
-# stops at /bin/sh and every `docker stop` waits out the full timeout.
-CMD ["sh", "-c", "exec fakeidp /usr/local/etc/private_key.der -p ${PORT} -b ${BIND} -e ${EXPOSED_HOST} -f /usr/local/fakeidp/static"]
+# Optional: a JSON file, or a folder of *.json files, with the clients of the
+# client credentials and token exchange grants: their claims, allowed flows and
+# allowed resources. Read by the binary itself, like USERS; empty means every
+# client is allowed everything with default claims.
+ENV CLIENTS=""
+
+# Exec form, and there is no shell in the image anyway: the service is PID 1 and
+# gets SIGTERM directly, so `docker stop` returns at once instead of waiting
+# out the timeout behind a /bin/sh.
+CMD ["fakeidp", "/usr/local/etc/private_key.der", "-f", "/usr/local/fakeidp/static"]

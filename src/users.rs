@@ -31,12 +31,14 @@ pub fn load(path: &Path) -> Result<Vec<User>, String> {
     Ok(users)
 }
 
-fn json_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+/// The file itself, or every `*.json` file of a folder in file name order. Shared
+/// with the clients file, which follows the same rules.
+pub(crate) fn json_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
     let entries = fs::read_dir(path)
-        .map_err(|err| format!("Cannot read users folder {}: {}", path.display(), err))?;
+        .map_err(|err| format!("Cannot read folder {}: {}", path.display(), err))?;
     let mut files: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|file| file.is_file() && file.extension().is_some_and(|ext| ext == "json"))

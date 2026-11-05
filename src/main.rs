@@ -8,9 +8,11 @@ use std::process::Command;
 
 mod auth;
 mod checks;
+mod clients;
 mod codes;
 mod discovery;
 mod errors;
+mod grants;
 mod styling;
 mod token;
 mod userinfo;
@@ -24,6 +26,9 @@ pub struct AppState {
     auth_codes: codes::AuthCodeStore,
     /// Users offered on the login screen. Empty means the manual login form.
     users: Vec<users::User>,
+    /// Clients with their own claims or restrictions at the token endpoint.
+    /// Empty means every client is allowed everything.
+    clients: Vec<clients::Client>,
     /// Optional folder restyling the login screen.
     styling: styling::Styling,
 }
@@ -35,12 +40,17 @@ impl AppState {
             exposed_host: exposed_host.clone(),
             auth_codes: codes::AuthCodeStore::default(),
             users: Vec::new(),
+            clients: Vec::new(),
             styling: styling::Styling::default(),
         }
     }
 
     pub fn with_users(self, users: Vec<users::User>) -> Self {
         Self { users, ..self }
+    }
+
+    pub fn with_clients(self, clients: Vec<clients::Client>) -> Self {
+        Self { clients, ..self }
     }
 
     pub fn with_styling(self, styling: styling::Styling) -> Self {
@@ -54,18 +64,25 @@ struct Args {
     /// Location of the RSA DER keypair as a file
     keyfile: Option<String>,
     // default value "./keys/private_key.der"
+    // FAKE_PORT, FAKE_BIND and EXPOSED_HOST are the container's configuration
+    // contract, prefixed so that a PORT or BIND already set in a shell does not
+    // silently reconfigure the service.
+    // The image has no shell to expand them into flags, so the binary reads
+    // them itself, like USERS, CLIENTS and STYLING below.
     /// Sets the port to listen to
-    #[arg(short = 'p', long, default_value = "8080")]
+    #[arg(short = 'p', long, env = "FAKE_PORT", default_value = "8080")]
     bind_port: u16,
-    //default value 8080
     /// Sets the host or IP number to bind to
-    #[arg(short = 'b', long, default_value = "0.0.0.0")]
+    #[arg(short = 'b', long, env = "FAKE_BIND", default_value = "0.0.0.0")]
     bind_host: String,
-    // Default value 0.0.0.0
     /// Full base URL of the host the service is found, like https://accounts.google.com
-    #[arg(short = 'e', long, default_value = "http://localhost:8080")]
+    #[arg(
+        short = 'e',
+        long,
+        env = "EXPOSED_HOST",
+        default_value = "http://localhost:8080"
+    )]
     exposed_host: String,
-    // Default value http://localhost:8080
     /// Folder for the static files to serve
     #[arg(short = 'f', long, default_value = "./static")]
     folder: String,
@@ -74,6 +91,11 @@ struct Args {
     /// encoded JWTs) to pick from on the login screen instead of typing one in
     #[arg(short = 'u', long, env = "USERS")]
     users: Option<String>,
+    /// JSON file, or folder of *.json files, holding an array of clients for the
+    /// client credentials and token exchange grants: their claims, allowed flows
+    /// and allowed resources. Clients not in it are allowed everything
+    #[arg(short = 'c', long, env = "CLIENTS")]
+    clients: Option<String>,
     /// Folder restyling the login screen: custom.css, logo.<ext> and
     /// background.<ext> are picked up when present, and the folder is served
     /// under /styling
@@ -97,6 +119,20 @@ fn load_users(path: Option<&str>) -> Vec<users::User> {
         println!("Loaded {} users from {}", users.len(), path);
     }
     users
+}
+
+/// An empty `CLIENTS` counts as not given, like `USERS`.
+fn load_clients(path: Option<&str>) -> Vec<clients::Client> {
+    let path = match path.filter(|path| !path.is_empty()) {
+        Some(path) => path,
+        None => return Vec::new(),
+    };
+    let clients = clients::load(std::path::Path::new(path)).unwrap_or_else(|err| {
+        eprintln!("{}", err);
+        std::process::exit(1);
+    });
+    println!("Loaded {} clients from {}", clients.len(), path);
+    clients
 }
 
 /// An empty `STYLING` counts as not given, like `USERS`. A folder that is not
@@ -141,12 +177,20 @@ async fn main() -> std::io::Result<()> {
     let app_state = web::Data::new(
         AppState::new(rsa_keys.clone(), args.exposed_host.clone())
             .with_users(load_users(args.users.as_deref()))
+            .with_clients(load_clients(args.clients.as_deref()))
             .with_styling(load_styling(args.styling.as_deref())),
     );
     let styling_folder = app_state.styling.folder().map(|f| f.to_path_buf());
 
-    let mut user = String::from_utf8(Command::new("whoami").output().unwrap().stdout).unwrap();
-    user.pop();
+    // Best effort: the distroless container image has no `whoami`, nor any
+    // other program to ask, so the banner must not fail without one.
+    let user = Command::new("whoami")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|user| !user.is_empty())
+        .or_else(|| std::env::var("USER").ok())
+        .unwrap_or_else(|| String::from("<unknown>"));
     println!("FakeIdP endpoint bound to {} as user {}!", bind, user);
     HttpServer::new(move || {
         let cors = Cors::default()
