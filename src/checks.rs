@@ -17,13 +17,17 @@ struct HealthResponse {
 }
 
 pub async fn check() -> Result<HttpResponse, Error> {
-    let mut system = sysinfo::System::new();
-    system.refresh_all();
+    // sysinfo 0.40 made `System::new` fallible; the service is still healthy
+    // when the memory figures cannot be read, so they are simply left out.
+    let memory = sysinfo::System::new().ok().map(|mut system| {
+        system.refresh_memory();
+        (system.total_memory(), system.used_memory())
+    });
 
     let response = HealthResponse {
         status: "OK",
-        total_memory: Some(system.total_memory().to_string()),
-        used_memory: Some(system.used_memory().to_string()),
+        total_memory: memory.map(|(total, _)| total.to_string()),
+        used_memory: memory.map(|(_, used)| used.to_string()),
     };
 
     Ok(HttpResponse::Ok().json(response))
