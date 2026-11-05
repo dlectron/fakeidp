@@ -11,7 +11,7 @@ services:
     ports:
       - "9090:9090"
     environment:
-      PORT: "9090"
+      FAKE_PORT: "9090"
       EXPOSED_HOST: "http://localhost:9090"
       # A folder: every *.json in it is read, in file name order. Leave USERS
       # unset (or empty) to get the manual login form instead.

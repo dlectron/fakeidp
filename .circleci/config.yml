@@ -66,13 +66,22 @@ jobs:
           name: Smoke test the image
           command: |
             # Runs the binary inside the runtime stage, which is what catches a
-            # builder and runtime that disagree about glibc or OpenSSL, plus the
-            # file modes that decide whether the service can read its own key
-            # and static files.
+            # builder and runtime that disagree about glibc, plus the file modes
+            # that decide whether the service can read its own key and static
+            # files. The runtime image is distroless, so there is no shell to
+            # poke at files with: the service has to start (it loads the key
+            # first thing) and answer requests. curl runs in a sidecar sharing
+            # the container's network namespace, because the remote docker
+            # host's ports are not reachable from this job.
             docker run --rm fakeidp:ci fakeidp --version
-            test "$(docker run --rm fakeidp:ci id -u)" = "1001"
-            test "$(docker run --rm fakeidp:ci sh -c 'ls /usr/local/fakeidp/static | wc -l')" -gt 0
-            docker run --rm fakeidp:ci sh -c 'head -c1 /usr/local/etc/private_key.der > /dev/null'
+            test "$(docker inspect --format '{{.Config.User}}' fakeidp:ci)" = "nonroot"
+            docker run -d --name fakeidp-ci fakeidp:ci
+            trap 'docker logs fakeidp-ci; docker rm -f fakeidp-ci' EXIT
+            test "$(docker top fakeidp-ci -o uid,pid | awk 'NR == 2 { print $1 }')" = "65532"
+            curl() { docker run --rm --network container:fakeidp-ci curlimages/curl:8.23.0 -fsS "$@"; }
+            curl --retry 10 --retry-connrefused --retry-delay 1 http://localhost:8080/.well-known/openid-configuration
+            curl http://localhost:8080/static/login.js > /dev/null
+            curl -X POST -H 'Content-Type: application/json' -d '{"sub":"ci"}' http://localhost:8080/token
 
   publish-docker-latest:
     docker:

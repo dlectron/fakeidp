@@ -64,18 +64,25 @@ struct Args {
     /// Location of the RSA DER keypair as a file
     keyfile: Option<String>,
     // default value "./keys/private_key.der"
+    // FAKE_PORT, FAKE_BIND and EXPOSED_HOST are the container's configuration
+    // contract, prefixed so that a PORT or BIND already set in a shell does not
+    // silently reconfigure the service.
+    // The image has no shell to expand them into flags, so the binary reads
+    // them itself, like USERS, CLIENTS and STYLING below.
     /// Sets the port to listen to
-    #[arg(short = 'p', long, default_value = "8080")]
+    #[arg(short = 'p', long, env = "FAKE_PORT", default_value = "8080")]
     bind_port: u16,
-    //default value 8080
     /// Sets the host or IP number to bind to
-    #[arg(short = 'b', long, default_value = "0.0.0.0")]
+    #[arg(short = 'b', long, env = "FAKE_BIND", default_value = "0.0.0.0")]
     bind_host: String,
-    // Default value 0.0.0.0
     /// Full base URL of the host the service is found, like https://accounts.google.com
-    #[arg(short = 'e', long, default_value = "http://localhost:8080")]
+    #[arg(
+        short = 'e',
+        long,
+        env = "EXPOSED_HOST",
+        default_value = "http://localhost:8080"
+    )]
     exposed_host: String,
-    // Default value http://localhost:8080
     /// Folder for the static files to serve
     #[arg(short = 'f', long, default_value = "./static")]
     folder: String,
@@ -175,8 +182,15 @@ async fn main() -> std::io::Result<()> {
     );
     let styling_folder = app_state.styling.folder().map(|f| f.to_path_buf());
 
-    let mut user = String::from_utf8(Command::new("whoami").output().unwrap().stdout).unwrap();
-    user.pop();
+    // Best effort: the distroless container image has no `whoami`, nor any
+    // other program to ask, so the banner must not fail without one.
+    let user = Command::new("whoami")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|user| !user.is_empty())
+        .or_else(|| std::env::var("USER").ok())
+        .unwrap_or_else(|| String::from("<unknown>"));
     println!("FakeIdP endpoint bound to {} as user {}!", bind, user);
     HttpServer::new(move || {
         let cors = Cors::default()

@@ -65,7 +65,7 @@ Note that a keypair is provided by default.
 ### The other option is to run it as a DOCKER container:
 
 ```bash
-docker run -p9090:9090 -e BIND=0.0.0.0 -e PORT=9090 -e EXPOSED_HOST=http://localhost:9090 spectare/fakeidp:latest
+docker run -p9090:9090 -e FAKE_BIND=0.0.0.0 -e FAKE_PORT=9090 -e EXPOSED_HOST=http://localhost:9090 spectare/fakeidp:latest
 ```
 
 Add `-e USERS=/users -v $PWD/users:/users:ro` to offer a fixed set of users on the login screen, see
@@ -73,7 +73,7 @@ Add `-e USERS=/users -v $PWD/users:/users:ro` to offer a fixed set of users on t
 `-e CLIENTS=/clients -v $PWD/clients:/clients:ro` to describe the clients of the machine-to-machine grants,
 see [A clients file](#a-clients-file).
 
-where BIND and PORT are environment variables that allow you to change the endpoint binding and address within the container.
+where FAKE_BIND and FAKE_PORT are environment variables that allow you to change the endpoint binding and address within the container.
 Note that you need to expose the port you choose and match that with the exposed host name/port.
 EXPOSED_HOST is the base URL used by the outside world to find the ./well-known/openid-configuration and the keys.
 
@@ -123,7 +123,7 @@ services:
     ports:
       - "9090:9090"
     environment:
-      PORT: "9090"
+      FAKE_PORT: "9090"
       EXPOSED_HOST: "http://localhost:9090"
       USERS: /usr/local/etc/fakeidp/users
     volumes:
