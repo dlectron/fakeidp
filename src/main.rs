@@ -8,9 +8,11 @@ use std::process::Command;
 
 mod auth;
 mod checks;
+mod clients;
 mod codes;
 mod discovery;
 mod errors;
+mod grants;
 mod styling;
 mod token;
 mod userinfo;
@@ -24,6 +26,9 @@ pub struct AppState {
     auth_codes: codes::AuthCodeStore,
     /// Users offered on the login screen. Empty means the manual login form.
     users: Vec<users::User>,
+    /// Clients with their own claims or restrictions at the token endpoint.
+    /// Empty means every client is allowed everything.
+    clients: Vec<clients::Client>,
     /// Optional folder restyling the login screen.
     styling: styling::Styling,
 }
@@ -35,12 +40,17 @@ impl AppState {
             exposed_host: exposed_host.clone(),
             auth_codes: codes::AuthCodeStore::default(),
             users: Vec::new(),
+            clients: Vec::new(),
             styling: styling::Styling::default(),
         }
     }
 
     pub fn with_users(self, users: Vec<users::User>) -> Self {
         Self { users, ..self }
+    }
+
+    pub fn with_clients(self, clients: Vec<clients::Client>) -> Self {
+        Self { clients, ..self }
     }
 
     pub fn with_styling(self, styling: styling::Styling) -> Self {
@@ -74,6 +84,11 @@ struct Args {
     /// encoded JWTs) to pick from on the login screen instead of typing one in
     #[arg(short = 'u', long, env = "USERS")]
     users: Option<String>,
+    /// JSON file, or folder of *.json files, holding an array of clients for the
+    /// client credentials and token exchange grants: their claims, allowed flows
+    /// and allowed resources. Clients not in it are allowed everything
+    #[arg(short = 'c', long, env = "CLIENTS")]
+    clients: Option<String>,
     /// Folder restyling the login screen: custom.css, logo.<ext> and
     /// background.<ext> are picked up when present, and the folder is served
     /// under /styling
@@ -97,6 +112,20 @@ fn load_users(path: Option<&str>) -> Vec<users::User> {
         println!("Loaded {} users from {}", users.len(), path);
     }
     users
+}
+
+/// An empty `CLIENTS` counts as not given, like `USERS`.
+fn load_clients(path: Option<&str>) -> Vec<clients::Client> {
+    let path = match path.filter(|path| !path.is_empty()) {
+        Some(path) => path,
+        None => return Vec::new(),
+    };
+    let clients = clients::load(std::path::Path::new(path)).unwrap_or_else(|err| {
+        eprintln!("{}", err);
+        std::process::exit(1);
+    });
+    println!("Loaded {} clients from {}", clients.len(), path);
+    clients
 }
 
 /// An empty `STYLING` counts as not given, like `USERS`. A folder that is not
@@ -141,6 +170,7 @@ async fn main() -> std::io::Result<()> {
     let app_state = web::Data::new(
         AppState::new(rsa_keys.clone(), args.exposed_host.clone())
             .with_users(load_users(args.users.as_deref()))
+            .with_clients(load_clients(args.clients.as_deref()))
             .with_styling(load_styling(args.styling.as_deref())),
     );
     let styling_folder = app_state.styling.folder().map(|f| f.to_path_buf());

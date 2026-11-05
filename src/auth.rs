@@ -152,6 +152,7 @@ pub async fn login(
         &client_id,
         &claims,
         nonce.as_deref(),
+        scope.as_deref(),
     );
 
     Ok(redirect_to(&append_fragment(

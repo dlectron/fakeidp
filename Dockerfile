@@ -114,6 +114,12 @@ ENV USERS=""
 # like USERS; empty means the built-in look.
 ENV STYLING=""
 
+# Optional: a JSON file, or a folder of *.json files, with the clients of the
+# client credentials and token exchange grants: their claims, allowed flows and
+# allowed resources. Read by the binary itself, like USERS; empty means every
+# client is allowed everything with default claims.
+ENV CLIENTS=""
+
 # exec so the service replaces the shell and becomes PID 1: without it SIGTERM
 # stops at /bin/sh and every `docker stop` waits out the full timeout.
 CMD ["sh", "-c", "exec fakeidp /usr/local/etc/private_key.der -p ${PORT} -b ${BIND} -e ${EXPOSED_HOST} -f /usr/local/fakeidp/static"]

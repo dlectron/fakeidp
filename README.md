@@ -39,6 +39,8 @@ Options:
           Folder for the static files to serve [default: ./static]
   -u, --users <USERS>
           JSON file, or folder of *.json files, holding an array of users (claim sets or encoded JWTs) to pick from on the login screen instead of typing one in [env: USERS=]
+  -c, --clients <CLIENTS>
+          JSON file, or folder of *.json files, holding an array of clients for the client credentials and token exchange grants: their claims, allowed flows and allowed resources. Clients not in it are allowed everything [env: CLIENTS=]
   -s, --styling <STYLING>
           Folder restyling the login screen: custom.css, logo.<ext> and background.<ext> are picked up when present, and the folder is served under /styling [env: STYLING=]
   -h, --help
@@ -67,7 +69,9 @@ docker run -p9090:9090 -e BIND=0.0.0.0 -e PORT=9090 -e EXPOSED_HOST=http://local
 ```
 
 Add `-e USERS=/users -v $PWD/users:/users:ro` to offer a fixed set of users on the login screen, see
-[A fixed set of users to log in as](#a-fixed-set-of-users-to-log-in-as).
+[A fixed set of users to log in as](#a-fixed-set-of-users-to-log-in-as), and
+`-e CLIENTS=/clients -v $PWD/clients:/clients:ro` to describe the clients of the machine-to-machine grants,
+see [A clients file](#a-clients-file).
 
 where BIND and PORT are environment variables that allow you to change the endpoint binding and address within the container.
 Note that you need to expose the port you choose and match that with the exposed host name/port.
@@ -214,6 +218,129 @@ A few deliberate conveniences for a test service:
 
 Send `response_type=token%20id_token&scope=openid` and the tokens come straight back in the fragment of
 the redirect: `redirect_uri#access_token=...&id_token=...&state=...&token_type=bearer`.
+
+## Machine-to-machine grants
+
+Two more grants at the token endpoint serve calls made without a person present. Their behaviour follows
+[Rauthy](https://github.com/sebadob/rauthy) 0.36.1, so that a stack tested against this service behaves
+the same against that one; the places where this service is more lenient are listed at the end.
+
+The discovery document advertises them as OIDC Discovery 1.0 and RFC 8414 prescribe: both grants in
+`grant_types_supported` (`client_credentials` and `urn:ietf:params:oauth:grant-type:token-exchange`), the
+three ways to identify the client in `token_endpoint_auth_methods_supported` (`client_secret_basic`,
+`client_secret_post`, `none`), and the claims they add — `azp` and `act` — in `claims_supported`. Neither RFC
+8693 nor RFC 8707 defines further metadata, so there is no flag for `resource` or the issued token type.
+
+### Client credentials
+
+A client gets a token as itself (RFC 6749 4.4):
+
+```bash
+curl -X POST http://localhost:8080/token \
+  -d grant_type=client_credentials \
+  -d client_id=integration \
+  -d client_secret=anything \
+  -d resource=http://localhost:8083
+```
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 12200
+}
+```
+
+The access token has `sub` and `azp` set to the client id, `iss` to the exposed host, and `aud` to the client
+id plus the `resource` when one was given (`["integration", "http://localhost:8083"]`; a string when it is
+the client id alone). There is no `id_token` and no `refresh_token`. The client id can also come from an
+`Authorization: Basic` header; the secret is read and ignored either way. A `scope` parameter is ignored, as
+Rauthy ignores it: give the client a `scope` claim in the clients file instead.
+
+### Token exchange
+
+A client swaps a user's access token for one meant for a single service (RFC 8693). Without an
+`actor_token` the new token looks like the user's; with one it carries an `act` claim naming the acting
+party:
+
+```bash
+curl -X POST http://localhost:8080/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d client_id=integration \
+  -d subject_token=<the user's access token> \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+  -d actor_token=<the integration client's own token> \
+  -d actor_token_type=urn:ietf:params:oauth:token-type:access_token \
+  -d resource=http://localhost:8083 \
+  -d scope=openid
+```
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 12200,
+  "scope": "openid"
+}
+```
+
+- The subject token's claims (`sub`, `name`, `email`, `groups`, anything else) are copied into the new
+  token; `iss`, `aud`, `azp`, `iat`, `exp`, `scope` and `act` are set afresh. `aud` is the client id plus
+  the target, as above.
+- **The subject and actor tokens are verified**: they must be signed by this service's key and, when they
+  have an `exp`, not be expired. Otherwise the answer is `invalid_grant`. This is the one place the service
+  checks a token, so that a backend's "the IdP refused the user's token" branch can be tested. An expired
+  token is still one `/token` call away on the legacy path, see below.
+- `resource` or `audience` names the target; both at once is `invalid_target`.
+- `scope` can only narrow the subject token's `scope`; asking for more is `invalid_scope`. Without a
+  `scope` the subject token's is kept. Tokens from the login screen carry their granted scope for this.
+- Only `urn:ietf:params:oauth:token-type:access_token` is accepted as `subject_token_type`,
+  `actor_token_type` (required with an `actor_token`) and `requested_token_type`.
+- With an `actor_token`, `act` is `{"sub": <actor's sub>}`, and when the actor token has an `act` of its
+  own, that one is nested inside.
+
+### A clients file
+
+Pass `-c`/`--clients` (or set `CLIENTS`) to a JSON file, or a folder of `*.json` files, holding an array of
+clients:
+
+```json
+[
+  {
+    "client_id": "integration",
+    "claims": { "name": "Integration service", "scope": "openid" },
+    "flows": ["client_credentials", "token_exchange"],
+    "allowed_resources": ["http://localhost:8083", "http://localhost:8084"]
+  },
+  { "client_id": "no-exchange", "flows": ["client_credentials"] }
+]
+```
+
+- `claims` are added to every client-credentials token of that client, over the defaults (`sub` included,
+  if you insist).
+- `flows` and `allowed_resources` restrict the client: a grant not in `flows` is `unauthorized_client`, a
+  `resource`/`audience` not in `allowed_resources` is `invalid_target`. Leave them out to allow everything.
+- A client that is not in the file is allowed everything, with the default claims. Without a file every
+  client is.
+
+The file is read once at startup, like the users file, and a bad one stops the service. A runnable
+example is in [examples/](examples/docker-compose.yml).
+
+### Where this differs from Rauthy
+
+Deliberately more lenient, in the spirit of this service:
+
+- the client secret is not checked; public, unknown and Basic-only clients are accepted;
+- `flows` and `allowed_resources` allow everything when left out (Rauthy denies by default);
+- the clients file may override reserved claims such as `sub` (Rauthy refuses them);
+- the exchange copies the subject token's claims instead of rebuilding them from a user record;
+- subject and actor tokens are checked for their signature and `exp` only, and a token without `exp` is
+  accepted;
+- refusals carry the RFC error codes (`unauthorized_client`, `invalid_scope`, `invalid_request`) and an
+  `error_description`, where Rauthy answers `"BadRequest"` with a `message`. `invalid_grant` and
+  `invalid_target` are the same on both;
+- responses add `scope`, and the exchange's adds `issued_token_type`; tokens have no `nbf`, `jti` or `typ`.
 
 ## Example for JWT token creation
 

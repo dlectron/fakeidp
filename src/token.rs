@@ -1,4 +1,5 @@
 use crate::codes::now_secs;
+use crate::grants;
 use crate::AppState;
 use actix_web::http::StatusCode;
 use actix_web::{error, web, Error, HttpRequest, HttpResponse};
@@ -9,7 +10,6 @@ use bytes::Bytes;
 use data_encoding::BASE64URL_NOPAD;
 use ring::digest;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
 use std::str;
 
 /// Lifetime of the tokens minted by the login screen, unless the login form
@@ -18,8 +18,9 @@ pub const TOKEN_TTL_SECS: u64 = 12200;
 
 /// The `/token` endpoint serves two unrelated purposes.
 ///
-/// * `application/x-www-form-urlencoded` -> the OAuth 2.0 token endpoint, used
-///   to exchange an authorization code (with PKCE) for tokens.
+/// * `application/x-www-form-urlencoded` -> the OAuth 2.0 token endpoint: the
+///   authorization code (with PKCE), client credentials and token exchange
+///   grants, see the `grants` module.
 /// * anything else -> the original "sign this claim set for me" shortcut, which
 ///   takes a bare JSON object and returns the encoded JWT as `text/plain`.
 ///
@@ -37,7 +38,7 @@ pub async fn create_token(
         .unwrap_or_default();
 
     if content_type.starts_with("application/x-www-form-urlencoded") {
-        Ok(exchange_code(&state, &body))
+        Ok(grants::handle(&state, &req, &body))
     } else {
         sign_claim_set(&state, &body)
     }
@@ -68,112 +69,8 @@ fn sign_claim_set(state: &AppState, claims_req: &Bytes) -> Result<HttpResponse, 
     })
 }
 
-/// RFC 6749 section 4.1.3 / RFC 7636 section 4.5: swap an authorization code for
-/// the tokens that the login screen described.
-fn exchange_code(state: &AppState, body: &Bytes) -> HttpResponse {
-    let form: HashMap<String, String> =
-        match serde_urlencoded::from_bytes::<Vec<(String, String)>>(body) {
-            Ok(pairs) => pairs.into_iter().collect(),
-            Err(err) => {
-                return oauth_error(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_request",
-                    &format!("Request body is not valid form encoding: {}", err),
-                )
-            }
-        };
-
-    let field = |name: &str| form.get(name).filter(|value| !value.is_empty());
-
-    match field("grant_type").map(String::as_str) {
-        Some("authorization_code") => {}
-        Some(other) => {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "unsupported_grant_type",
-                &format!("Only authorization_code is supported, got {}", other),
-            )
-        }
-        None => {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "Missing grant_type",
-            )
-        }
-    }
-
-    let code = match field("code") {
-        Some(code) => code,
-        None => return oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "Missing code"),
-    };
-
-    // Looked up but not yet retired: a request that fails validation below leaves
-    // the code exchangeable so it can be retried with a corrected verifier.
-    let entry = match state.auth_codes.get(code) {
-        Some(entry) => entry,
-        None => {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "Authorization code is unknown, already used or expired",
-            )
-        }
-    };
-
-    // These two are the only things we are strict about, because a client that
-    // gets them wrong is misconfigured rather than exercising an edge case.
-    if let Some(redirect_uri) = field("redirect_uri") {
-        if *redirect_uri != entry.redirect_uri {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "redirect_uri does not match the one used at the authorization endpoint",
-            );
-        }
-    }
-    if let Some(client_id) = field("client_id") {
-        if *client_id != entry.client_id {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "client_id does not match the one used at the authorization endpoint",
-            );
-        }
-    }
-
-    if !entry.verify_pkce(field("code_verifier").map(String::as_str)) {
-        return oauth_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
-            "code_verifier does not match the code_challenge",
-        );
-    }
-
-    // Validation passed, so the code is spent.
-    state.auth_codes.consume(code);
-
-    let tokens = issue_tokens(
-        &state.rsa_key_pair,
-        &state.exposed_host,
-        &entry.client_id,
-        &entry.claims,
-        entry.nonce.as_deref(),
-    );
-
-    HttpResponse::Ok()
-        .insert_header(("Cache-Control", "no-store"))
-        .insert_header(("Pragma", "no-cache"))
-        .json(json!({
-            "access_token": tokens.access_token,
-            "id_token": tokens.id_token,
-            "token_type": "Bearer",
-            "expires_in": tokens.expires_in,
-            "scope": entry.scope.unwrap_or_else(|| "openid".to_string()),
-        }))
-}
-
-fn oauth_error(status: StatusCode, error: &str, description: &str) -> HttpResponse {
+/// RFC 6749 section 5.2: an error body for the token endpoint.
+pub(crate) fn oauth_error(status: StatusCode, error: &str, description: &str) -> HttpResponse {
     HttpResponse::build(status)
         .insert_header(("Cache-Control", "no-store"))
         .json(json!({ "error": error, "error_description": description }))
@@ -189,12 +86,17 @@ pub struct IssuedTokens {
 ///
 /// Shared by the implicit flow (tokens in the redirect fragment) and the code
 /// flow (tokens at the token endpoint), so both produce identical claim sets.
+///
+/// The granted `scope` goes into the access token only, as Rauthy does: the
+/// token exchange reads it there to decide what scope an exchanged token may
+/// have.
 pub fn issue_tokens(
     signing_secret: &Secret,
     exposed_host: &str,
     client_id: &str,
     claims: &Map<String, Value>,
     nonce: Option<&str>,
+    scope: Option<&str>,
 ) -> IssuedTokens {
     let iat = now_secs();
 
@@ -209,7 +111,11 @@ pub fn issue_tokens(
         base.insert(key.clone(), value.clone());
     }
 
-    let access_token = create_jwt(signing_secret, Value::Object(base.clone()));
+    let mut access_claims = base.clone();
+    if let Some(scope) = scope {
+        access_claims.entry("scope").or_insert_with(|| json!(scope));
+    }
+    let access_token = create_jwt(signing_secret, Value::Object(access_claims));
 
     let mut id_claims = base.clone();
     id_claims
@@ -268,6 +174,51 @@ pub fn create_jwt(signing_secret: &Secret, claims: Value) -> String {
         .unwrap()
         .unwrap_encoded()
         .to_string()
+}
+
+/// Check that `jwt` was signed with this IdP's key and has not expired, and hand
+/// back its payload exactly as it is. Only the token exchange calls this: it is
+/// the one place the service verifies a token, see `grants::token_exchange`.
+///
+/// The payload is decoded by hand rather than through biscuit's `ClaimsSet`,
+/// which would move `exp` and the other registered claims out of the `Value`
+/// (and refuse a non-integer `exp`, which the legacy path happily signs).
+pub(crate) fn verify_jwt(signing_secret: &Secret, jwt: &str) -> Result<Map<String, Value>, String> {
+    let mut parts = jwt.trim().split('.');
+    let (header, payload, signature) =
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(header), Some(payload), Some(signature), None) => (header, payload, signature),
+            _ => return Err("expected three dot separated parts".to_string()),
+        };
+
+    let signature = BASE64URL_NOPAD
+        .decode(signature.as_bytes())
+        .map_err(|_| "the signature is not base64url")?;
+    SignatureAlgorithm::RS256
+        .verify(
+            &signature,
+            format!("{}.{}", header, payload).as_bytes(),
+            signing_secret,
+        )
+        .map_err(|_| "the signature does not verify")?;
+
+    let payload = BASE64URL_NOPAD
+        .decode(payload.as_bytes())
+        .map_err(|_| "the payload is not base64url")?;
+    let claims = match serde_json::from_slice::<Value>(&payload) {
+        Ok(Value::Object(claims)) => claims,
+        _ => return Err("the payload is not a JSON object".to_string()),
+    };
+
+    // No exp is not expired: the legacy path mints plenty of those.
+    if let Some(exp) = claims.get("exp") {
+        match exp.as_f64() {
+            Some(exp) if exp >= now_secs() as f64 => {}
+            Some(_) => return Err("it has expired".to_string()),
+            None => return Err("its exp is not a number".to_string()),
+        }
+    }
+    Ok(claims)
 }
 
 #[cfg(test)]
@@ -426,6 +377,11 @@ mod tests {
         let access_token = body["access_token"].as_str().unwrap();
         assert_eq!(id_claims["at_hash"], json!(at_hash(access_token)));
 
+        // The granted scope is a claim of the access token, and only of that one.
+        let access_claims = decode_claims(access_token);
+        assert_eq!(access_claims["scope"], json!("openid profile"));
+        assert!(id_claims.get("scope").is_none());
+
         Ok(())
     }
 
@@ -533,7 +489,7 @@ mod tests {
     async fn test_unsupported_grant_type() -> Result<(), Error> {
         let (app, _state) = app_with_code(None).await;
 
-        let resp = test::call_service(&app, token_request("grant_type=client_credentials")).await;
+        let resp = test::call_service(&app, token_request("grant_type=password")).await;
         assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
         let body: Value = test::read_body_json(resp).await;
         assert_eq!(body["error"], json!("unsupported_grant_type"));

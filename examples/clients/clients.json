@@ -1,0 +1,12 @@
+[
+  {
+    "client_id": "integration",
+    "claims": { "name": "Integration service", "scope": "openid" },
+    "flows": ["client_credentials", "token_exchange"],
+    "allowed_resources": ["http://localhost:8083", "http://localhost:8084"]
+  },
+  {
+    "client_id": "no-exchange",
+    "flows": ["client_credentials"]
+  }
+]
